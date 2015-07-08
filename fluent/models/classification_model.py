@@ -136,7 +136,7 @@ class ClassificationModel(object):  ## TODO: update docstring
     ## TODO
 
 
-  def evaluateResults(self, classifications, references, idx): ## TODO: evaluation metrics for multiple classifcations
+  def evaluateResults(self, classifications, references, idx, samples): ## TODO: evaluation metrics for multiple classifcations
     """
     Calculate statistics for the predicted classifications against the actual.
 
@@ -154,9 +154,9 @@ class ClassificationModel(object):  ## TODO: update docstring
                                               matrix (numpy array).
     """
     if self.verbosity > 0:
-      self.printTrialReport(classifications, references, idx)
+      self.printTrialReport(classifications, references, idx, samples)
 
-    accuracy = self.calculateAccuracy(classifications)
+    accuracy = self.calculateAccuracy(classifications, samples, references)
     cm = self.calculateConfusionMatrix(classifications, references)
 
     return (accuracy, cm)
@@ -193,9 +193,28 @@ class ClassificationModel(object):  ## TODO: update docstring
 
     return results
 
+  @staticmethod
+  def outputErrors(errors, samples, references):
+    """
+    Prints sample errors to console and logs to file as well.
+    """
+    template = "{0:<30}{1:<30}{2:<40}"
+    print template.format("ACTUAL", "PREDICTED", "SAMPLE")
+
+    for aLabel, pLabel, sample in errors:
+      actual = [references[a] for a in aLabel]
+      predicted = []
+      for p in pLabel:
+        if p is not None:
+          predicted.append(references[p])
+        else:
+          predicted.append("NONE")
+      sampleText = " ".join(sample[0])
+      print template.format(actual, predicted, sampleText)
+
 
   @staticmethod
-  def calculateAccuracy(classifications):   ## TODO: just get numpy arrays passed in?
+  def calculateAccuracy(classifications, samples, references):   ## TODO: just get numpy arrays passed in?
     """
     Returns classification accuracy -- i.e. correct labels out of total labels.
     """
@@ -205,10 +224,16 @@ class ClassificationModel(object):  ## TODO: update docstring
     actual = numpy.array(classifications[1])
     predicted = numpy.array(classifications[0])
 
+    errors = []
     accuracy = 0.0
-    for aLabel, pLabel in zip(actual, predicted):
+    for aLabel, pLabel, sample in zip(actual, predicted, samples):
       commonElems = numpy.intersect1d(aLabel, pLabel)
-      accuracy += len(commonElems)/float(len(aLabel))
+      currAccuracy = len(commonElems)/float(len(aLabel))
+      accuracy += currAccuracy
+      if currAccuracy != 1.0:
+        errors.append((aLabel, pLabel, sample))
+
+    #ClassificationModel.outputErrors(errors, samples, references)
 
     return accuracy/len(actual)
 
@@ -242,17 +267,24 @@ class ClassificationModel(object):  ## TODO: update docstring
 
 
   @staticmethod
-  def printTrialReport(labels, refs, idx):  ## TODO: pprint
+  def printTrialReport(labels, refs, idx, samples):  ## TODO: pprint
     """Print columns for sample #, actual label, and predicted label."""
-    template = "{0:<10}|{1:<30}|{2:<30}"
+    template = "{0:<10}{1:<30}{2:<30}{3:40}"
     print "Evaluation results for the trial:"
-    print template.format("#", "Actual", "Predicted")
+    print template.format("#", "ACTUAL", "PREDICTED", "SAMPLE")
     for i in xrange(len(labels[0])):
+      sampleText = " ".join(samples[i][0])
+      actual =  [refs[label] for label in labels[1][i]]
       if labels[0][i][0] == None:
-        print template.format(idx[i], [refs[label] for label in labels[1][i]], "(none)")
+        print("\033[31m" + template.format(idx[i], [refs[label] for label in
+                                   labels[1][i]],"(none)", sampleText) + "\033[0m")
       else:
-        print template.format(
-          idx[i], [refs[label] for label in labels[1][i]], [refs[label] for label in labels[0][i]])
+        predicted = [refs[label] for label in labels[0][i]]
+        if predicted != actual:
+          print("\033[31m" + template.format(
+          idx[i], actual, predicted, sampleText) + "\033[0m")
+        else:
+          print(template.format(idx[i], actual, predicted, sampleText) )
 
 
   @staticmethod

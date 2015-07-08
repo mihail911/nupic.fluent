@@ -76,8 +76,12 @@ def runExperiment(model, patterns, labels, idxSplits):
 # i.e. streaming input.
 def training(model, trainSet):
   """Trains model on the bitmap patterns and corresponding labels lists."""
+  count = 0
   for x in trainSet:
+    if count%100 == 0:
+      print "Trained %d examples" %(count)
     model.trainModel(x[0], x[1])
+    count += 1
 
 
 def testing(model, evalSet):
@@ -90,21 +94,25 @@ def testing(model, evalSet):
                                             is the actual classifications.
   """
   trialResults = [[], []]
+  count = 0
   for x in evalSet:
     # Take sample, # of labels as params and return predicted distribution over
     # labels
+    if count%100 == 0:
+      print "Tested %d examples" %(count)
     predicted = model.testModel(x[0], numLabels=len(x[1]))
     trialResults[0].append(predicted)
     trialResults[1].append(x[1])
+    count += 1
   return trialResults
 
 
-def calculateResults(model, results, refs, indices, fileName):
+def calculateResults(model, results, refs, indices, fileName, samples):
   """
   Evaluate the results, returning accuracy and confusion matrix, and writing
   the confusion matrix to a CSV.
   """
-  result = model.evaluateResults(results, refs, indices)
+  result = model.evaluateResults(results, refs, indices, samples)
   result[1].to_csv(fileName)
   return result
 
@@ -215,8 +223,7 @@ def run(args):
   preprocessTime = time.time()
   texter = TextPreprocess()
 
-  (samples, labelReference, labels) = setupData(args, texter,
-                                                                 dataPath)
+  (samples, labelReference, labels) = setupData(args, texter, dataPath)
 
   print("Preprocessing complete; elapsed time is {0:.2f} seconds.".
         format(time.time() - preprocessTime))
@@ -235,14 +242,15 @@ def run(args):
   if args.train:
     training(model, [(p[0], labels[i]) for i, p in enumerate(patterns)])
 
+  errors = [] # To store the indices of the errors made by the classifier
   if args.test:
     evalSet = []
     for idx, p in enumerate(patterns):
-      evalSet.append((p[0], s[1]))
+      evalSet.append((p[0], p[1]))
     results = testing(model, evalSet)
     resultMetrics = calculateResults(
       model, results, labelReference, xrange(len(samples)),
-      os.path.join(modelPath, "test_results.csv"))
+      os.path.join(modelPath, "test_results.csv"), samples)
     print resultMetrics
     if model.plot:
       model.plotConfusionMatrix(resultMetrics[1])
@@ -269,10 +277,10 @@ def run(args):
       print "Calculating intermediate results for this fold. Writing to CSV."
       intermResults.append(calculateResults(
         model, trialResults, labelReference, partitions[k][1],
-        os.path.join(modelPath, "evaluation_fold_" + str(k) + ".csv")))
+        os.path.join(modelPath, "evaluation_fold_" + str(k) + ".csv"), samples))
 
     print "Calculating cumulative results for {0} trials.".format(args.kFolds)
-    results = model.evaluateCumulativeResults(intermResults)
+    results = model.evaluateCumulativeResults(intermResults) #
     results["total_cm"].to_csv(os.path.join(modelPath, "evaluation_totals.csv"))
     if args.expectationDataPath:
       computeExpectedAccuracy(list(itertools.chain.from_iterable(predictions)),
