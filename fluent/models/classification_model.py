@@ -244,7 +244,7 @@ class ClassificationModel(object):
     print "Evaluation results for the trial:"
     print template.format("#", "Actual", "Predicted")
     for i in xrange(len(labels[0])):
-      if not labels[0][i].any():
+      if not any(labels[0][i]):
         # No predicted classes for this sample.
         print template.format(idx[i],
                               [refs[label] for label in labels[1][i]],
