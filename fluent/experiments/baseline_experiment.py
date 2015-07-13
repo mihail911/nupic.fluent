@@ -112,22 +112,23 @@ def calculateResults(model, results, refs, indices, fileName):
   return result
 
 
-def computeExpectedAccuracy(predictedLabels, dataPath):
+def computeExpectedAccuracy(predictedLabels, expectedDataDict, labelReference,
+                            partitions):
   """
   Compute the accuracy of the models predictions against what we expect it to
-  predict; considers only single classification.
+  predict; considers multiclass classification.
   """
-  _, expectedLabels = readCSV(dataPath, 2, [3])
-  if len(expectedLabels) != len(predictedLabels):
-    raise ValueError("Lists of labels must have the same length.")
 
-  accuracy = len([i for i in xrange(len(expectedLabels))
-    if expectedLabels[i]==predictedLabels[i]]) / float(len(expectedLabels))
+  accuracies = numpy.zeros((len(predictedLabels)))
+  for i, predictionList in enumerate(predictedLabels):
+    expectedList = expectedDataDict.items()[partitions[i]][1]
+    accuracies[i] += (float(len(set(predictionList) & set(expectedList)))
+                      / len(expectedList))
+  accuracy = numpy.sum(accuracies) / len(predictedLabels)
 
-  print "Accuracy against expected classifications = ", accuracy
+  return accuracy
 
-
-def setupData(args, dataPath):
+def setupData(args, dataPath, expectedDataPath):
   """ Performs data preprocessing and setup given the user-specified args.
 
   @param args       (Namespace)     User-provided arguments via the cmd line.
@@ -138,6 +139,8 @@ def setupData(args, dataPath):
       in the data.
   """
   dataDict = readCSV(dataPath, 2, args.numClasses)
+  expectedDataDict = readCSV(expectedDataPath, 2, args.numClasses) #TODO:
+                                        # Check whether should put index 2
 
   # Collect each possible label string into a list, where the indices will be
   # their references throughout the experiment.
@@ -160,7 +163,7 @@ def setupData(args, dataPath):
     samples = [(texter.tokenize(sample), labels)
                for sample, labels in dataDict.iteritems()]
 
-  return samples, labelReference
+  return samples, labelReference, expectedDataDict
 
 
 def run(args):
@@ -175,6 +178,8 @@ def run(args):
   # Setup directories.
   root = os.path.dirname(__file__)
   dataPath = os.path.abspath(os.path.join(root, '../..', args.dataFile))
+  expectedDataPath = os.path.abspath(os.path.join(root, '../..',
+                                                  args.expectationDataPath))
   modelPath = os.path.abspath(
     os.path.join(root, args.resultsDir, args.expName, args.modelName))
   if not os.path.exists(modelPath):
@@ -183,6 +188,8 @@ def run(args):
   # Verify input params.
   if not os.path.isfile(dataPath):
     raise ValueError("Invalid data path.")
+  if not os.path.isfile(expectedDataPath):
+    raise ValueError("Invalid data path")
   if (not isinstance(args.kFolds, int)) or (args.kFolds < 1):
     raise ValueError("Invalid value for number of cross-validation folds.")
   if (args.train or args.test) and args.kFolds > 1:
@@ -208,16 +215,18 @@ def run(args):
   print "Reading in data and preprocessing."
   preprocessTime = time.time()
 
-  samples, labelReference = setupData(args, dataPath)
+  samples, labelReference, expectedDataDict = setupData(args, dataPath,
+                                                        expectedDataPath)
 
   print("Preprocessing complete; elapsed time is {0:.2f} seconds.".
         format(time.time() - preprocessTime))
   if args.verbosity > 1:
-    for i, s in enumerate(samples): print i, s, labelReference[labels[i]]
+    for i, s in enumerate(samples):
+      labels = [labelReference[idx] for idx in s[1]]
+      print i, s, labels
 
   print "Encoding the data."
   encodeTime = time.time()
-  patterns = [(model.encodePattern(s[0]), s[1]) for s in samples]
   patterns = [{"pattern": model.encodePattern(s[0]),
               "labels": s[1]}
               for s in samples]
@@ -244,8 +253,10 @@ def run(args):
     # on the remaining subset.
     partitions = KFolds(args.kFolds).split(range(len(samples)), randomize=True)
     intermResults = []
-    predictions = []
+    expectedIntermResults = numpy.zeros(args.kFolds)
+
     for k in xrange(args.kFolds):
+      predictions = [] # TODO: Make sure it's ok for this to be here...
       print "Training and testing for CV fold {0}.".format(k)
       kTime = time.time()
       trialResults = runExperiment(model, patterns, partitions[k])
@@ -254,10 +265,15 @@ def run(args):
 
       if args.expectationDataPath:
         # Keep the predicted labels (top prediction only) for later.
-        p = [l if l else [None] for l in trialResults[0]]
-        predictions.append(
-          [labelReference[idx[0]] if idx[0] != None else '(none)' for idx in p])
+        p = [l if l.any() else [None] for l in trialResults[0]]
+        for labelsList in p:
+          labels = [labelReference[idx] if idx != None else '(none)' for idx
+                    in labelsList]
+          predictions.append(labels)
 
+        avgAccuracy = computeExpectedAccuracy(predictions,
+          expectedDataDict, labelReference, partitions[k][1])
+        expectedIntermResults[k] = avgAccuracy
       print "Calculating intermediate results for this fold. Writing to CSV."
       intermResults.append(calculateResults(
         model, trialResults, labelReference, partitions[k][1],
@@ -266,11 +282,12 @@ def run(args):
     print "Calculating cumulative results for {0} trials.".format(args.kFolds)
     results = model.evaluateCumulativeResults(intermResults)
 
+    print "Average accuracy against expected labels across %d folds is %f" \
+          %(args.kFolds,
+            numpy.sum(expectedIntermResults)/len(expectedIntermResults))
+
     # TODO: csv writing broken until ClassificationModel confusion matrix is fixed
     # results["total_cm"].to_csv(os.path.join(modelPath, "evaluation_totals.csv"))
-    if args.expectationDataPath:
-      computeExpectedAccuracy(list(itertools.chain.from_iterable(predictions)),
-        os.path.abspath(os.path.join(root, '../..', args.expectationDataPath)))
 
   ## TODO:
   # print "Calculating random classifier results for comparison."
